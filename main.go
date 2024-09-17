@@ -96,6 +96,22 @@ func main() {
 		},
 	})
 
+	rootCmd.AddCommand(&cobra.Command{
+		Use:   "list",
+		Short: "List all current habits.",
+		Run: func(cmd *cobra.Command, args []string) {
+			if err := listHabits(); err != nil {
+				//if strings.Contains(err.Error(), "habit does not exist") {
+				//	logrus.Errorf("Already not tracking %s.", args[0])
+				//} else {
+				//	logrus.Error(err.Error())
+				//	logrus.Error("Something broke.")
+				//}
+				os.Exit(1)
+			}
+		},
+	})
+
 	// Add a flag for the hello command
 	//rootCmd.Commands()[0].Flags().String("name", "world", "Name to greet")
 
@@ -198,15 +214,8 @@ func getTracks() (tracks []Track, err error) {
 	return
 }
 
-func untrackHabit(name string) error {
-
-	var tracks []Track
-	tracks, err := getTracks()
-	if err != nil {
-		return err
-	}
-
-	m := make(map[string]bool)
+func activeHabits(tracks []Track) (m map[string]bool) {
+	m = make(map[string]bool)
 
 	for _, t := range tracks {
 		if t.started {
@@ -215,6 +224,18 @@ func untrackHabit(name string) error {
 			delete(m, t.habit)
 		}
 	}
+	return
+}
+
+func untrackHabit(name string) error {
+
+	var tracks []Track
+	tracks, err := getTracks()
+	if err != nil {
+		return err
+	}
+
+	m := activeHabits(tracks)
 
 	if !m[name] {
 		return errors.New("habit does not exist")
@@ -231,22 +252,13 @@ func untrackHabit(name string) error {
 }
 
 func trackHabit(name string) error {
-
 	var tracks []Track
 	tracks, err := getTracks()
 	if err != nil {
 		return err
 	}
 
-	m := make(map[string]bool)
-
-	for _, t := range tracks {
-		if t.started {
-			m[t.habit] = true
-		} else {
-			delete(m, t.habit)
-		}
-	}
+	m := activeHabits(tracks)
 
 	if m[name] {
 		return errors.New("habit exists")
@@ -259,5 +271,20 @@ func trackHabit(name string) error {
 		return err
 	}
 
+	return nil
+}
+
+func listHabits() error {
+	var tracks []Track
+	tracks, err := getTracks()
+	if err != nil {
+		return err
+	}
+
+	m := activeHabits(tracks)
+
+	for k, _ := range m {
+		logrus.Infof("%s", k)
+	}
 	return nil
 }
