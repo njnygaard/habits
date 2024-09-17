@@ -8,11 +8,25 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/huh"
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
+
+type Log struct {
+	id     int
+	habit  string
+	logged time.Time
+}
+
+type Track struct {
+	id        int
+	habit     string
+	eventDate time.Time
+	started   bool
+}
 
 var db *sql.DB
 
@@ -55,6 +69,30 @@ func main() {
 	}(db)
 
 	rootCmd.AddCommand(&cobra.Command{
+		Use:   "reset",
+		Short: "Reset today.",
+		Run: func(cmd *cobra.Command, args []string) {
+			if err := resetToday(); err != nil {
+				logrus.Error(err.Error())
+				logrus.Error("Something broke.")
+				os.Exit(1)
+			}
+		},
+	})
+
+	rootCmd.AddCommand(&cobra.Command{
+		Use:   "today",
+		Short: "What have you done today?",
+		Run: func(cmd *cobra.Command, args []string) {
+			if err := todaysHabits(); err != nil {
+				logrus.Error(err.Error())
+				logrus.Error("Something broke.")
+				os.Exit(1)
+			}
+		},
+	})
+
+	rootCmd.AddCommand(&cobra.Command{
 		Use:   "track",
 		Short: "Add a Habit to track.",
 		Run: func(cmd *cobra.Command, args []string) {
@@ -77,7 +115,7 @@ func main() {
 
 	rootCmd.AddCommand(&cobra.Command{
 		Use:   "untrack",
-		Short: "Stop tracking a habit.",
+		Short: "Stop tracking a Habit.",
 		Run: func(cmd *cobra.Command, args []string) {
 			if len(args) < 1 {
 				logrus.Error("Habit name required.")
@@ -98,9 +136,25 @@ func main() {
 
 	rootCmd.AddCommand(&cobra.Command{
 		Use:   "list",
-		Short: "List all current habits.",
+		Short: "List all current Habits.",
 		Run: func(cmd *cobra.Command, args []string) {
 			if err := listHabits(); err != nil {
+				//if strings.Contains(err.Error(), "habit does not exist") {
+				//	logrus.Errorf("Already not tracking %s.", args[0])
+				//} else {
+				//	logrus.Error(err.Error())
+				//	logrus.Error("Something broke.")
+				//}
+				os.Exit(1)
+			}
+		},
+	})
+
+	rootCmd.AddCommand(&cobra.Command{
+		Use:   "log",
+		Short: "Log your Habits.",
+		Run: func(cmd *cobra.Command, args []string) {
+			if err := logHabits(); err != nil {
 				//if strings.Contains(err.Error(), "habit does not exist") {
 				//	logrus.Errorf("Already not tracking %s.", args[0])
 				//} else {
@@ -179,13 +233,6 @@ func initDB() error {
 	}
 
 	return nil
-}
-
-type Track struct {
-	id        int
-	habit     string
-	eventDate time.Time
-	started   bool
 }
 
 func getTracks() (tracks []Track, err error) {
@@ -283,8 +330,164 @@ func listHabits() error {
 
 	m := activeHabits(tracks)
 
-	for k, _ := range m {
+	if len(m) == 0 {
+		logrus.Warn("Not tracking any Habits yet!")
+	}
+
+	for k := range m {
 		logrus.Infof("%s", k)
+	}
+	return nil
+}
+
+func logHabits() error {
+	var (
+		selections []string
+	)
+
+	var tracks []Track
+	tracks, err := getTracks()
+	if err != nil {
+		return err
+	}
+
+	m := activeHabits(tracks)
+	for k := range m {
+		m[k] = false
+	}
+
+	selectTodaysHabitsSQL := `
+		select *
+		from log
+		where date(logged) = date('now')
+		order by logged asc;
+		`
+	rows, err := db.Query(selectTodaysHabitsSQL)
+	if err != nil {
+		logrus.Error("query failed", err)
+		return err
+	}
+
+	for rows.Next() {
+		var t Log
+		if err = rows.Scan(&t.id, &t.habit, &t.logged); err != nil {
+			return err
+		}
+		m[t.habit] = true
+
+	}
+	if err = rows.Err(); err != nil {
+		return err
+	}
+
+	if len(m) == 0 {
+		logrus.Warn("Not tracking any Habits yet!")
+		return nil
+	}
+
+	form := huh.NewForm(
+		huh.NewGroup(
+			huh.NewMultiSelect[string]().
+				Title("Habits").
+				OptionsFunc(func() []huh.Option[string] {
+					var opts []huh.Option[string]
+					for k := range m {
+						if m[k] {
+							opts = append(opts, huh.NewOption[string](k, k).Selected(true))
+						} else {
+							opts = append(opts, huh.NewOption[string](k, k).Selected(false))
+						}
+					}
+					return opts
+				}, nil).
+				Value(&selections),
+		),
+	)
+	err = form.Run()
+	if err != nil {
+		logrus.Error("Error logging Habits.")
+		return err
+	}
+
+	logrus.Info(selections)
+
+	for _, v := range selections {
+		_, err = db.Exec(`
+			INSERT INTO log(habit) VALUES (?)
+			`, v)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func todaysHabits() error {
+	var tracks []Track
+	tracks, err := getTracks()
+	if err != nil {
+		return err
+	}
+
+	m := activeHabits(tracks)
+	for k := range m {
+		m[k] = false
+	}
+
+	//if len(m) == 0 {
+	//	logrus.Warn("Not tracking any Habits yet!")
+	//	return nil
+	//}
+
+	selectTodaysHabitsSQL := `
+		select *
+		from log
+		where date(logged) = date('now')
+		order by logged asc;
+		`
+	rows, err := db.Query(selectTodaysHabitsSQL)
+	if err != nil {
+		logrus.Error("query failed", err)
+		return err
+	}
+
+	for rows.Next() {
+		var t Log
+		if err = rows.Scan(&t.id, &t.habit, &t.logged); err != nil {
+			return err
+		}
+		m[t.habit] = true
+
+	}
+	if err = rows.Err(); err != nil {
+		return err
+	}
+
+	for k := range m {
+		if m[k] {
+			//fmt.Printf("✅ %s\n", k)
+			fmt.Printf("🟩 %s\n", k)
+			//logrus.Infof("%s: %t", k, m[k])
+		} else {
+			//fmt.Printf("⬜ %s\n", k)
+			//fmt.Printf("🟨 %s\n", k)
+			//fmt.Printf("🟥 %s\n", k)
+			fmt.Printf("⬛ %s\n", k)
+			//logrus.Warnf("%s: %t", k, m[k])
+		}
+	}
+	return nil
+}
+
+func resetToday() error {
+	resetTodaysHabitsSQL := `
+		delete
+		from log
+		where date(logged) = date('now');
+		`
+	_, err := db.Exec(resetTodaysHabitsSQL)
+	if err != nil {
+		return fmt.Errorf("error deleting from table: %w", err)
 	}
 	return nil
 }
