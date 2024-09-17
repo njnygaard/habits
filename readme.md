@@ -1,5 +1,23 @@
 # Habits
 
+Track your Habits on a daily basis.
+
+## Roadmap
+
+- [x] Add Habits to Track
+- [x] Remove Habits Being Tracked
+- [x] Log Daily Habits
+- [x] Reset Today
+- [x] List Tracked Habits
+- [ ] Calendar View
+  - [ ] Week
+  - [ ] Month
+  - [ ] Year
+- [ ] Streaks
+- [ ] Deactivated Habits
+- [ ] Emoji Everywhere
+- [ ] Colors
+
 ## Development Notes
 
 You can't make a SQL identifier from a prepared statement.
