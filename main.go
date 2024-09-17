@@ -138,7 +138,7 @@ func main() {
 		Use:   "list",
 		Short: "List all current Habits.",
 		Run: func(cmd *cobra.Command, args []string) {
-			if err := listHabits(); err != nil {
+			if err := listTrackedHabits(); err != nil {
 				//if strings.Contains(err.Error(), "habit does not exist") {
 				//	logrus.Errorf("Already not tracking %s.", args[0])
 				//} else {
@@ -155,21 +155,18 @@ func main() {
 		Short: "Log your Habits.",
 		Run: func(cmd *cobra.Command, args []string) {
 			if err := logHabits(); err != nil {
-				//if strings.Contains(err.Error(), "habit does not exist") {
-				//	logrus.Errorf("Already not tracking %s.", args[0])
-				//} else {
-				//	logrus.Error(err.Error())
-				//	logrus.Error("Something broke.")
-				//}
+				if err.Error() == "user aborted" {
+					logrus.Info("No changes made.")
+					os.Exit(0)
+				}
+
+				logrus.Error(err.Error())
+				logrus.Error("Something broke.")
 				os.Exit(1)
 			}
 		},
 	})
 
-	// Add a flag for the hello command
-	//rootCmd.Commands()[0].Flags().String("name", "world", "Name to greet")
-
-	// Execute the root command
 	if err := rootCmd.Execute(); err != nil {
 		logrus.Errorf("Error executing command: %v\n", err)
 		if err != nil {
@@ -181,12 +178,10 @@ func main() {
 
 // initConfig reads in config file and ENV variables if set.
 func initConfig() error {
-	// Set default config file name and path
-	viper.SetConfigName("config") // name of config file (without extension)
-	viper.AddConfigPath(".")      // optionally look for config in the working directory
-	viper.AutomaticEnv()          // read environment variables
+	viper.SetConfigName("config")
+	viper.AddConfigPath(".")
+	viper.AutomaticEnv()
 
-	// Read the config file
 	if err := viper.ReadInConfig(); err != nil {
 		return fmt.Errorf("error reading config file: %w", err)
 	}
@@ -261,7 +256,7 @@ func getTracks() (tracks []Track, err error) {
 	return
 }
 
-func activeHabits(tracks []Track) (m map[string]bool) {
+func activeHabits(tracks []Track) (m map[string]bool, err error) {
 	m = make(map[string]bool)
 
 	for _, t := range tracks {
@@ -271,7 +266,56 @@ func activeHabits(tracks []Track) (m map[string]bool) {
 			delete(m, t.habit)
 		}
 	}
+
+	if len(m) == 0 {
+		err = errors.New("no active habits")
+	}
 	return
+}
+
+func listTrackedHabits() error {
+	var tracks []Track
+	tracks, err := getTracks()
+	if err != nil {
+		return err
+	}
+
+	m, err := activeHabits(tracks)
+	if err != nil {
+		logrus.Warn("Not tracking any Habits yet!")
+	}
+
+	if len(m) == 0 {
+		logrus.Warn("Not tracking any Habits yet!")
+	}
+
+	for k := range m {
+		logrus.Infof("%s", k)
+	}
+	return nil
+}
+
+func trackHabit(name string) error {
+	var tracks []Track
+	tracks, err := getTracks()
+	if err != nil {
+		return err
+	}
+
+	m, _ := activeHabits(tracks)
+
+	if m[name] {
+		return errors.New("habit exists")
+	}
+
+	_, err = db.Exec(`
+	INSERT INTO track(habit, started) VALUES (?)
+	`, name, true)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func untrackHabit(name string) error {
@@ -282,7 +326,7 @@ func untrackHabit(name string) error {
 		return err
 	}
 
-	m := activeHabits(tracks)
+	m, _ := activeHabits(tracks)
 
 	if !m[name] {
 		return errors.New("habit does not exist")
@@ -298,60 +342,20 @@ func untrackHabit(name string) error {
 	return nil
 }
 
-func trackHabit(name string) error {
+func logHabits() (err error) {
+	var selections []string
 	var tracks []Track
-	tracks, err := getTracks()
+
+	tracks, err = getTracks()
 	if err != nil {
-		return err
+		return
 	}
 
-	m := activeHabits(tracks)
-
-	if m[name] {
-		return errors.New("habit exists")
-	}
-
-	_, err = db.Exec(`
-	INSERT INTO track(habit) VALUES (?)
-	`, name)
+	m, err := activeHabits(tracks)
 	if err != nil {
-		return err
+		return
+		//logrus.Warn("Not tracking any Habits yet!")
 	}
-
-	return nil
-}
-
-func listHabits() error {
-	var tracks []Track
-	tracks, err := getTracks()
-	if err != nil {
-		return err
-	}
-
-	m := activeHabits(tracks)
-
-	if len(m) == 0 {
-		logrus.Warn("Not tracking any Habits yet!")
-	}
-
-	for k := range m {
-		logrus.Infof("%s", k)
-	}
-	return nil
-}
-
-func logHabits() error {
-	var (
-		selections []string
-	)
-
-	var tracks []Track
-	tracks, err := getTracks()
-	if err != nil {
-		return err
-	}
-
-	m := activeHabits(tracks)
 	for k := range m {
 		m[k] = false
 	}
@@ -364,8 +368,8 @@ func logHabits() error {
 		`
 	rows, err := db.Query(selectTodaysHabitsSQL)
 	if err != nil {
-		logrus.Error("query failed", err)
-		return err
+		//logrus.Error("query failed", err)
+		return
 	}
 
 	for rows.Next() {
@@ -377,13 +381,13 @@ func logHabits() error {
 
 	}
 	if err = rows.Err(); err != nil {
-		return err
+		return
 	}
 
-	if len(m) == 0 {
-		logrus.Warn("Not tracking any Habits yet!")
-		return nil
-	}
+	//if len(m) == 0 {
+	//	logrus.Warn("Not tracking any Habits yet!")
+	//	return nil
+	//}
 
 	form := huh.NewForm(
 		huh.NewGroup(
@@ -405,11 +409,10 @@ func logHabits() error {
 	)
 	err = form.Run()
 	if err != nil {
-		logrus.Error("Error logging Habits.")
 		return err
 	}
 
-	logrus.Info(selections)
+	//logrus.Info(selections)
 
 	for _, v := range selections {
 		_, err = db.Exec(`
@@ -429,15 +432,13 @@ func todaysHabits() error {
 		return err
 	}
 
-	m := activeHabits(tracks)
+	m, err := activeHabits(tracks)
+	if err != nil {
+		logrus.Warn("Not tracking any Habits yet!")
+	}
 	for k := range m {
 		m[k] = false
 	}
-
-	//if len(m) == 0 {
-	//	logrus.Warn("Not tracking any Habits yet!")
-	//	return nil
-	//}
 
 	selectTodaysHabitsSQL := `
 		select *
@@ -465,15 +466,9 @@ func todaysHabits() error {
 
 	for k := range m {
 		if m[k] {
-			//fmt.Printf("✅ %s\n", k)
 			fmt.Printf("🟩 %s\n", k)
-			//logrus.Infof("%s: %t", k, m[k])
 		} else {
-			//fmt.Printf("⬜ %s\n", k)
-			//fmt.Printf("🟨 %s\n", k)
-			//fmt.Printf("🟥 %s\n", k)
 			fmt.Printf("⬛ %s\n", k)
-			//logrus.Warnf("%s: %t", k, m[k])
 		}
 	}
 	return nil
